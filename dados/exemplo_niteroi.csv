@@ -1,0 +1,20 @@
+Endereço,Demanda,Depósito,Atendimento (min),Abre,Fecha
+"Rua Passo da Pátria, 156, São Domingos",0,True,0,,
+"Rua Presidente Backer, 337, Icaraí",40,False,10,,
+"Rua da Conceição, 100, Centro",30,False,10,08:00,10:00
+"Avenida Roberto Silveira, 512, Icaraí",60,False,15,,
+"Rua Nóbrega, 672, Icaraí",50,False,10,,
+"Rua Marechal Deodoro, 200, Centro",20,False,10,08:00,10:00
+"Rua Leite Ribeiro, 212, Fonseca",80,False,15,13:00,17:00
+"Rua Tenente Osório, 30, Fonseca",30,False,10,,
+"Rua Gavião Peixoto, 182, Icaraí",40,False,10,,
+"Rua Moreira César, 229, Icaraí",30,False,10,09:00,12:00
+"Avenida Ernani do Amaral Peixoto, 500, Centro",60,False,15,,
+"Estrada Francisco da Cruz Nunes, 1000, Itaipu",80,False,20,,
+"Rua Doutor Paulo César, 300, Santa Rosa",20,False,10,,
+"Avenida Rui Barbosa, 400, São Francisco",50,False,10,,
+"Alameda São Boaventura, 800, Fonseca",40,False,10,,
+"Rua General Castrioto, 100, Barreto",60,False,15,13:00,17:00
+"Avenida Quintino Bocaiúva, 300, São Francisco",30,False,10,,
+"Avenida Almirante Ary Parreiras, 600, Icaraí",40,False,10,,
+"Rua Mário Alves, 50, Icaraí",20,False,10,,

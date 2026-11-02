@@ -1,0 +1,9 @@
+streamlit>=1.40
+streamlit-folium>=0.22
+folium>=0.17
+requests>=2.31
+pandas>=2.1
+numpy>=1.26
+openpyxl>=3.1
+# A 0.1.4 do PyPI foi publicada sem a biblioteca compilada do solver; a 0.1.3 a inclui.
+VRPSolverEasy==0.1.3
