@@ -119,6 +119,18 @@ assimétrica tanto no solver (arcos direcionados) quanto no GRASP. A linha reta
 corrigida (× 1,4) fica só como reserva, caso o serviço esteja fora do ar — e o
 app avisa quando isso acontece.
 
+### Geocodificação que confere a rua
+
+Os serviços de geocodificação sempre devolvem *alguma coisa*, mesmo quando a
+rua não existe na cidade pedida: "Rua Pio Correa 80" completada com
+"Niterói, RJ" voltava como Rua Vilar Correa, em Niterói, sem aviso. Por isso
+`geo.py` só aceita um resultado se o nome da rua achada conferir com o
+digitado (sem acento, com abreviações como *Prof.* e *Dr.*). A cidade padrão
+desempata, mas não manda: se o endereço diz outra cidade ("…, Rio de
+Janeiro"), ela é respeitada; se a rua não existe na cidade padrão, procura-se
+no resto do país, de preferência no mesmo estado. Se nada conferir, o endereço
+aparece como **não encontrado**, em vez de cair no lugar errado.
+
 ### Três armadilhas do VRPSolverEasy
 
 Descobertas testando a biblioteca, e contornadas em `solver.py`:
@@ -161,6 +173,8 @@ dependências do sistema), o app também continua funcionando com o GRASP.
 
 `python validar.py --app` — todos os testes passam:
 
+0. **Geocodificação**: aceita a mesma rua sem acento ou abreviada, e
+   rejeita rua só parecida ou um lugar de mesmo nome.
 1. **Avaliação de rota**: custo fixo + ida + volta; rota aberta não cobra a
    volta; capacidade estourada e janela perdida tornam a rota inviável; chegar
    antes da janela faz o veículo esperar.

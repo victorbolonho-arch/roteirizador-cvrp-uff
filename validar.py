@@ -118,6 +118,26 @@ def testar_avaliacao():
            "chegar antes da abertura faz o veículo esperar")
 
 
+def testar_conferencia_de_rua():
+    print("\n0. Geocodificação: a rua achada tem que ser a digitada")
+    import geo
+
+    def lugar(rua, nome=""):
+        return {"rua": rua, "nome": nome}
+
+    checar(geo._rua_confere("Rua Pio Correa 80", lugar("Rua Pio Corrêa")),
+           "aceita a mesma rua escrita sem acento")
+    checar(not geo._rua_confere("Rua Pio Correa 80", lugar("Rua Vilar Correa")),
+           "rejeita rua só parecida (Pio Correa x Vilar Correa)")
+    checar(not geo._rua_confere("São Clemente 244", lugar("", "Parque São Clemente")),
+           "com número, um parque de mesmo nome não serve")
+    checar(geo._rua_confere("R. Prof. Plínio Leite 10", lugar("Rua Professor Plínio Leite")),
+           "aceita abreviações (Prof. = Professor)")
+    checar(geo._menciona_cidade("Centro, Rio de Janeiro", "Rio de Janeiro")
+           and not geo._menciona_cidade("Centro, Niterói", "Rio de Janeiro"),
+           "reconhece a cidade escrita no endereço")
+
+
 def testar_forca_bruta():
     print("\n2. VRPSolverEasy contra força bruta")
     casos = [
@@ -196,6 +216,7 @@ def testar_app():
 
 def main() -> int:
     random.seed(0)
+    testar_conferencia_de_rua()
     testar_avaliacao()
     testar_forca_bruta()
     testar_grasp()

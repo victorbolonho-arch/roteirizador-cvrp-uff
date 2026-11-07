@@ -89,19 +89,65 @@ def _chave(endereco: str) -> str:
 # Geocodificação
 # ---------------------------------------------------------------------------
 
-def _menciona_cidade(endereco: str, cidade: str) -> bool:
-    """O endereço já cita a cidade padrão? (comparação sem acento e caixa)."""
+def _normalizar(texto: str) -> str:
+    """Minúsculas e sem acento, para comparar nomes."""
     import unicodedata
-
-    def normalizar(texto: str) -> str:
-        sem_acento = unicodedata.normalize("NFKD", texto)
-        return "".join(c for c in sem_acento if not unicodedata.combining(c)).lower()
-
-    nome_cidade = normalizar(cidade.split(",")[0].strip())
-    return bool(nome_cidade) and nome_cidade in normalizar(endereco)
+    sem_acento = unicodedata.normalize("NFKD", texto or "")
+    return "".join(c for c in sem_acento if not unicodedata.combining(c)).lower()
 
 
-def _consultar_nominatim(consulta: str) -> tuple[float, float, str] | None:
+def _menciona_cidade(texto: str, cidade: str) -> bool:
+    """O texto cita a cidade? (comparação sem acento e caixa)."""
+    nome_cidade = _normalizar(cidade.split(",")[0].strip())
+    return bool(nome_cidade) and nome_cidade in _normalizar(texto)
+
+
+# Tipos de logradouro e palavras de ligação: não ajudam a identificar a rua.
+_GENERICAS = {"rua", "r", "avenida", "av", "ave", "estrada", "estr", "est", "travessa", "tv",
+              "trav", "praca", "pca", "pc", "alameda", "al", "largo", "lgo", "rodovia", "rod",
+              "beco", "ladeira", "ld", "via", "vila", "de", "da", "do", "das", "dos", "e", "n", "no"}
+_TIPOS_LOGRADOURO = _GENERICAS - {"de", "da", "do", "das", "dos", "e", "n", "no"}
+# Abreviações comuns em endereços brasileiros (o OpenStreetMap usa o nome por extenso).
+_ABREVIACOES = {"dr": "doutor", "prof": "professor", "profa": "professora", "pres": "presidente",
+                "gal": "general", "gen": "general", "cel": "coronel", "mal": "marechal",
+                "alm": "almirante", "sen": "senador", "dep": "deputado", "eng": "engenheiro",
+                "visc": "visconde", "cons": "conselheiro", "des": "desembargador",
+                "sta": "santa", "sto": "santo", "sao": "sao", "nsa": "nossa", "ns": "nossa"}
+
+
+def _palavras(texto: str) -> list[str]:
+    import re
+    return re.findall(r"[a-z]+", _normalizar(texto))
+
+
+def _palavras_da_rua(endereco: str) -> list[str]:
+    """Palavras que identificam a rua: o 1º trecho do endereço, sem tipo nem número."""
+    rua = endereco.split(",")[0]
+    return [_ABREVIACOES.get(p, p) for p in _palavras(rua) if p not in _GENERICAS]
+
+
+def _rua_confere(endereco: str, candidato: dict) -> bool:
+    """O lugar achado é mesmo a rua digitada?
+
+    Os serviços devolvem o "mais parecido" mesmo quando a rua não existe na
+    cidade pedida: "Rua Pio Correa 80, Niterói" voltava como Rua Vilar Correa.
+    Por isso exige-se que as palavras do nome da rua apareçam no nome achado
+    (as abreviações valem pelo começo: "Prof." confere com "Professor").
+    """
+    procuradas = _palavras_da_rua(endereco)
+    if not procuradas:
+        return True
+    tem_numero = any(ch.isdigit() for ch in endereco.split(",")[0])
+    # Com número, é uma rua: confere-se o nome da rua. Sem número pode ser um
+    # lugar ("Shopping Plaza"), e vale também o nome do lugar.
+    alvo = candidato["rua"] if tem_numero else f"{candidato['rua']} {candidato['nome']}"
+    achadas = set(_palavras(alvo))
+    bate = sum(any(a.startswith(p) or p.startswith(a) for a in achadas if len(a) > 1)
+               for p in procuradas)
+    return bate >= max(1, math.ceil(0.75 * len(procuradas)))
+
+
+def _consultar_nominatim(consulta: str) -> list[dict]:
     global _ultima_consulta
     espera = INTERVALO_NOMINATIM - (time.monotonic() - _ultima_consulta)
     if espera > 0:
@@ -109,7 +155,8 @@ def _consultar_nominatim(consulta: str) -> tuple[float, float, str] | None:
     try:
         resposta = requests.get(
             URL_NOMINATIM,
-            params={"q": consulta, "format": "jsonv2", "limit": 1, "countrycodes": "br"},
+            params={"q": consulta, "format": "jsonv2", "limit": 5, "countrycodes": "br",
+                    "addressdetails": 1},
             headers={"User-Agent": USER_AGENT, "Accept-Language": "pt-BR"},
             timeout=15,
         )
@@ -118,37 +165,64 @@ def _consultar_nominatim(consulta: str) -> tuple[float, float, str] | None:
         dados = resposta.json()
     except (requests.RequestException, ValueError):
         _ultima_consulta = time.monotonic()
-        return None
-    if not dados:
-        return None
-    return float(dados[0]["lat"]), float(dados[0]["lon"]), dados[0].get("display_name", "")
+        return []
+    candidatos = []
+    for d in dados:
+        a = d.get("address", {})
+        candidatos.append({
+            "lat": float(d["lat"]), "lon": float(d["lon"]),
+            "texto": d.get("display_name", ""), "nome": d.get("name") or "",
+            "rua": a.get("road") or a.get("pedestrian") or a.get("square") or "",
+            "cidade": a.get("city") or a.get("town") or a.get("municipality") or a.get("village") or "",
+            "uf": a.get("ISO3166-2-lvl4", "")[-2:],
+        })
+    return candidatos
 
 
-def _consultar_photon(consulta: str) -> tuple[float, float, str] | None:
+def _consultar_photon(consulta: str) -> list[dict]:
     try:
         resposta = requests.get(
-            URL_PHOTON, params={"q": consulta, "limit": 1},
+            URL_PHOTON, params={"q": consulta, "limit": 5},
             headers={"User-Agent": USER_AGENT}, timeout=15,
         )
         resposta.raise_for_status()
         dados = resposta.json().get("features", [])
     except (requests.RequestException, ValueError):
-        return None
-    if not dados:
-        return None
-    lon, lat = dados[0]["geometry"]["coordinates"]
-    p = dados[0].get("properties", {})
-    partes = [p.get("name"), p.get("street"), p.get("housenumber"), p.get("district"),
-              p.get("city"), p.get("state")]
-    return float(lat), float(lon), ", ".join(str(x) for x in partes if x)
+        return []
+    candidatos = []
+    for d in dados:
+        if (d.get("properties", {}).get("countrycode") or "BR").upper() != "BR":
+            continue
+        lon, lat = d["geometry"]["coordinates"]
+        p = d.get("properties", {})
+        partes = [p.get("name"), p.get("street"), p.get("housenumber"), p.get("district"),
+                  p.get("city"), p.get("state")]
+        eh_rua = p.get("osm_key") == "highway"
+        candidatos.append({
+            "lat": float(lat), "lon": float(lon),
+            "texto": ", ".join(str(x) for x in partes if x), "nome": p.get("name") or "",
+            "rua": p.get("street") or (p.get("name") if eh_rua else "") or "",
+            "cidade": p.get("city") or "", "uf": "",
+        })
+    return candidatos
 
 
 def geocodificar(endereco: str, cidade_padrao: str = "") -> Local:
-    """Converte um endereço em coordenadas, tentando do mais ao menos específico.
+    """Converte um endereço em coordenadas.
 
-    Se o endereço não cita a cidade padrão, ela é acrescentada na primeira
-    tentativa: "Rua da Conceição 100" sozinho existe em dezenas de cidades, e
-    o serviço escolheria qualquer uma.
+    A cidade padrão desempata endereços que não dizem a cidade ("Rua da
+    Conceição 100" existe em dezenas de cidades), mas não pode mandar no
+    resultado: o endereço pode ser de outra cidade. A ordem das tentativas é:
+
+      1. o endereço como foi digitado, aceito só se a cidade achada estiver
+         escrita nele ("Av. Rio Branco 156, Centro, Rio de Janeiro");
+      2. o endereço + a cidade padrão;
+      3. o endereço como foi digitado, em qualquer cidade (de preferência no
+         estado da cidade padrão);
+      4. se faltou o tipo de logradouro ("São Clemente 244"), tudo de novo com
+         "Rua" na frente.
+
+    Em todas, o nome da rua achada tem que conferir com o digitado.
     """
     endereco = endereco.strip()
     if not endereco:
@@ -160,20 +234,43 @@ def geocodificar(endereco: str, cidade_padrao: str = "") -> Local:
         c = cache[chave]
         return Local(endereco, c["lat"], c["lon"], c.get("encontrado", ""), "cache")
 
-    tentativas = []
-    if cidade_padrao and not _menciona_cidade(endereco, cidade_padrao):
-        tentativas.append(f"{endereco}, {cidade_padrao}")
-    tentativas.append(endereco)
+    partes = [p.strip() for p in cidade_padrao.split(",")]
+    uf_padrao = partes[-1].upper() if partes and len(partes[-1]) == 2 else ""
+    respostas: dict[tuple[str, str], list[dict]] = {}   # cada consulta vai ao serviço uma vez só
 
-    for consulta in tentativas:
+    def procurar(base: str, consulta: str, aceitar) -> Local | None:
+        """Consulta os serviços e devolve o primeiro lugar que confere com `base`."""
         for fonte, consultar in (("nominatim", _consultar_nominatim),
                                  ("photon", _consultar_photon)):
-            achado = consultar(consulta)
-            if achado:
-                lat, lon, texto = achado
-                cache[chave] = {"lat": lat, "lon": lon, "encontrado": texto}
-                _gravar_cache(cache)
-                return Local(endereco, lat, lon, texto, fonte)
+            if (fonte, consulta) not in respostas:
+                respostas[fonte, consulta] = consultar(consulta)
+            candidatos = sorted(respostas[fonte, consulta],
+                                key=lambda c: bool(uf_padrao) and c["uf"] not in ("", uf_padrao))
+            for c in candidatos:
+                if _rua_confere(base, c) and aceitar(c):
+                    cache[chave] = {"lat": c["lat"], "lon": c["lon"], "encontrado": c["texto"]}
+                    _gravar_cache(cache)
+                    return Local(endereco, c["lat"], c["lon"], c["texto"], fonte)
+        return None
+
+    def cidade_escrita_ou_padrao(base: str):
+        depois_da_rua = ",".join(base.split(",")[1:])
+        return lambda c: bool(c["cidade"]) and (_menciona_cidade(depois_da_rua, c["cidade"])
+                                                or _menciona_cidade(c["cidade"], cidade_padrao))
+
+    variantes = [endereco]
+    primeira = _palavras(endereco.split(",")[0])
+    if primeira and primeira[0] not in _TIPOS_LOGRADOURO:
+        variantes.append(f"Rua {endereco}")
+
+    for base in variantes:
+        achado = None
+        if cidade_padrao and not _menciona_cidade(base, cidade_padrao):
+            achado = (procurar(base, base, cidade_escrita_ou_padrao(base))
+                      or procurar(base, f"{base}, {cidade_padrao}", lambda c: True))
+        achado = achado or procurar(base, base, lambda c: True)
+        if achado:
+            return achado
 
     return Local(endereco, None, None, "não encontrado", "")
 
