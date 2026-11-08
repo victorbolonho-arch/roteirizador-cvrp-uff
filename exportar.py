@@ -77,7 +77,14 @@ def tabela_paradas(p: Problema, sol: Solucao, enderecos: list[str]) -> pd.DataFr
                            "Carga no veículo": 0, "Chegada": _hora(rota.fim),
                            "Início do atendimento": "", "Espera (min)": 0.0,
                            "Km acumulado": round(km, 2)})
-    return pd.DataFrame(linhas)
+    tabela = pd.DataFrame(linhas)
+    if not p.usar_janelas and not tabela.empty:
+        # Sem janelas o veículo nunca espera: o atendimento começa na chegada.
+        tabela["Chegada"] = tabela["Chegada"].where(tabela["Chegada"] != "",
+                                                    tabela["Início do atendimento"])
+        tabela = tabela.drop(columns=["Início do atendimento", "Espera (min)"]) \
+                       .rename(columns={"Chegada": "Horário"})
+    return tabela
 
 
 def tabela_rotas(p: Problema, sol: Solucao) -> pd.DataFrame:
@@ -119,7 +126,6 @@ def planilha(p: Problema, sol: Solucao, enderecos: list[str], coords,
     clientes = pd.DataFrame([{
         "Ponto": enderecos[i], "Tipo": "depósito" if i in p.depositos else "cliente",
         "Demanda": p.dem[i], "Atendimento (min)": p.srv[i],
-        "Janela": f"{_hora(p.jini[i])}–{_hora(p.jfim[i])}" if p.usar_janelas and i in p.clientes else "",
         "Latitude": coords[i][0], "Longitude": coords[i][1],
     } for i in p.depositos + p.clientes])
 

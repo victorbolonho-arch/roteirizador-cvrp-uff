@@ -24,10 +24,10 @@ Etapa 3  GRASP + VRPSolverEasy  →  rotas no mapa, ordem de visita, Excel, Goog
 | Geocodificação | automática | automática **com conferência no mapa e correção manual** das coordenadas; serviço de reserva |
 | Distâncias | — | **pelas ruas** (OSRM), em km e minutos, **assimétricas** (mão única) |
 | Frota | um tipo, custo por km | vários tipos, **custo fixo + por km + por hora**, cada um com seu depósito e **jornada** |
-| Restrições | capacidade | capacidade, **janelas de atendimento**, tempo de parada, jornada, rota aberta |
+| Restrições | capacidade | capacidade, tempo de parada em cada cliente, **jornada** dos veículos, rota aberta |
 | Algoritmo | VRPSolverEasy | **GRASP (trabalho 4) + VRPSolverEasy**: a heurística dá a solução de partida e o solver melhora ou **prova a otimalidade** |
 | Qualidade da resposta | status | status, **limitante inferior e gap** quando não fecha o ótimo |
-| Resultado | mapa | mapa por ruas com **paradas numeradas** e camadas por veículo; horário de chegada e espera em cada parada; ocupação |
+| Resultado | mapa | mapa por ruas com **paradas numeradas** e camadas por veículo; horário de chegada em cada parada; ocupação |
 | Saída | — | **Excel** do plano e **link do Google Maps** de cada rota |
 
 ---
@@ -35,12 +35,12 @@ Etapa 3  GRASP + VRPSolverEasy  →  rotas no mapa, ordem de visita, Excel, Goog
 ## Como usar
 
 1. **Pontos** — digite os endereços (ou importe uma planilha, ou clique em
-   *Carregar exemplo de Niterói*). Marque o depósito. *Abre* e *Fecha* são
-   opcionais. Clique em **Geocodificar**, confira os pontos no mapa e corrija a
-   latitude/longitude de algum que tenha caído no lugar errado.
-2. **Frota** — cadastre os tipos de veículo. Escolha se os veículos voltam ao
-   depósito e se as janelas de horário devem ser respeitadas. O botão **ⓘ**
-   explica cada coluna, com um exemplo de como o custo é calculado.
+   *Carregar exemplo de Niterói*). Marque o depósito. Clique em
+   **Geocodificar**, confira os pontos no mapa e corrija a latitude/longitude
+   de algum que tenha caído no lugar errado.
+2. **Frota** — cadastre os tipos de veículo e escolha se eles voltam ao
+   depósito. O botão **ⓘ** explica cada coluna, com um exemplo de como o custo
+   é calculado.
 3. **Rotas** — o mapa mostra cada veículo numa cor, com as paradas numeradas
    na ordem de visita. Clique numa parada para ver o horário de chegada.
    Baixe o plano em Excel ou abra a rota direto no Google Maps.
@@ -123,6 +123,14 @@ longo que voltar (mão única). Por isso a matriz vem do OSRM, e é usada como
 assimétrica tanto no solver (arcos direcionados) quanto no GRASP. A linha reta
 corrigida (× 1,4) fica só como reserva, caso o serviço esteja fora do ar — e o
 app avisa quando isso acontece.
+
+### Sem horário de atendimento na interface
+
+O motor (`modelo.py`, GRASP e a modelagem no VRPSolverEasy) trata janelas de
+horário por cliente, e isso é conferido contra força bruta em `validar.py`.
+Mas a opção foi retirada da interface: não é exigida no trabalho e deixava o
+preenchimento dos pontos mais trabalhoso. Os veículos continuam respeitando a
+**jornada** cadastrada na frota.
 
 ### Geocodificação que confere a rua
 

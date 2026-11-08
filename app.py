@@ -29,7 +29,7 @@ from modelo import HORIZONTE, Problema, TipoVeiculo, avaliar_rota, verificar
 PASTA = Path(__file__).parent
 EXEMPLO = PASTA / "dados" / "exemplo_niteroi.csv"
 
-COLUNAS_PONTOS = ["Endereço", "Demanda", "Depósito", "Atendimento (min)", "Abre", "Fecha"]
+COLUNAS_PONTOS = ["Endereço", "Demanda", "Depósito", "Atendimento (min)"]
 COLUNAS_FROTA = ["Tipo", "Capacidade", "Quantidade", "Custo fixo (R$)", "Custo por km (R$)",
                  "Custo por hora (R$)", "Depósito", "Início da jornada", "Fim da jornada"]
 
@@ -67,7 +67,7 @@ def brl(valor: float) -> str:
 
 def tabela_vazia() -> pd.DataFrame:
     return pd.DataFrame([{"Endereço": "", "Demanda": 0, "Depósito": True,
-                          "Atendimento (min)": 0, "Abre": "", "Fecha": ""}])
+                          "Atendimento (min)": 0}])
 
 
 def ler_planilha(arquivo) -> pd.DataFrame:
@@ -82,19 +82,15 @@ def ler_planilha(arquivo) -> pd.DataFrame:
     apelidos = {"endereço": "Endereço", "endereco": "Endereço", "address": "Endereço",
                 "demanda": "Demanda", "demand": "Demanda", "depósito": "Depósito",
                 "deposito": "Depósito", "atendimento": "Atendimento (min)",
-                "atendimento (min)": "Atendimento (min)", "abre": "Abre", "fecha": "Fecha",
-                "inicio": "Abre", "início": "Abre", "fim": "Fecha"}
+                "atendimento (min)": "Atendimento (min)"}
     df = df.rename(columns={c: apelidos.get(str(c).strip().lower(), c) for c in df.columns})
     if "Endereço" not in df.columns:
         raise ValueError("a planilha precisa de uma coluna 'Endereço'")
-    for coluna, padrao in (("Demanda", 0), ("Depósito", False), ("Atendimento (min)", 0),
-                           ("Abre", ""), ("Fecha", "")):
+    for coluna, padrao in (("Demanda", 0), ("Depósito", False), ("Atendimento (min)", 0)):
         if coluna not in df.columns:
             df[coluna] = padrao
     df["Depósito"] = df["Depósito"].astype(str).str.strip().str.lower().isin(
         ["true", "1", "sim", "s", "x", "verdadeiro"])
-    df["Abre"] = df["Abre"].fillna("").astype(str)
-    df["Fecha"] = df["Fecha"].fillna("").astype(str)
     return df[COLUNAS_PONTOS]
 
 
@@ -191,7 +187,7 @@ with st.sidebar:
              "uma aproximação para quando não houver internet.")
 
     if st.button("📍 Carregar exemplo de Niterói", width="stretch"):
-        st.session_state.pontos = pd.read_csv(EXEMPLO, dtype={"Abre": str, "Fecha": str}).fillna("")
+        st.session_state.pontos = pd.read_csv(EXEMPLO)
         st.session_state.versao_tabela += 1
         for chave in ("locais", "matriz", "frota", "resultado"):
             st.session_state.pop(chave, None)
@@ -217,14 +213,13 @@ with st.sidebar:
 def etapa_pontos():
     st.title("Etapa 1 · Pontos de atendimento")
     st.write("Informe o depósito e os clientes pelo endereço. Marque **Depósito** em ao "
-             "menos um ponto. *Abre* e *Fecha* são opcionais: o horário em que o cliente "
-             "pode ser atendido (ex.: 08:00 e 12:00).")
+             "menos um ponto.")
 
     aba_digitar, aba_importar = st.tabs(["✏️ Digitar", "📄 Importar planilha"])
 
     with aba_importar:
         st.caption("CSV ou Excel com a coluna **Endereço** e, opcionalmente, Demanda, "
-                   "Depósito, Atendimento (min), Abre, Fecha.")
+                   "Depósito, Atendimento (min).")
         arquivo = st.file_uploader("Planilha de pontos", type=["csv", "xlsx", "xls"],
                                    label_visibility="collapsed")
         if arquivo is not None and st.button("Usar esta planilha"):
@@ -248,8 +243,6 @@ def etapa_pontos():
                 "Depósito": st.column_config.CheckboxColumn(),
                 "Atendimento (min)": st.column_config.NumberColumn(min_value=0, step=1,
                                                                    help="Tempo parado no cliente"),
-                "Abre": st.column_config.TextColumn(help="HH:MM, opcional"),
-                "Fecha": st.column_config.TextColumn(help="HH:MM, opcional"),
             })
 
     pontos = editada.copy()
@@ -336,7 +329,7 @@ def conferir_geocodificacao(pontos: pd.DataFrame):
 # Etapa 2 — Frota
 # ---------------------------------------------------------------------------
 
-def montar_problema(frota: pd.DataFrame, retornar: bool, usar_janelas: bool) -> tuple[Problema, list, list[str]]:
+def montar_problema(frota: pd.DataFrame, retornar: bool) -> tuple[Problema, list, list[str]]:
     """Converte as tabelas da interface no `Problema`, com os depósitos na frente."""
     m = st.session_state.matriz
     pontos = m["pontos"]
@@ -351,18 +344,9 @@ def montar_problema(frota: pd.DataFrame, retornar: bool, usar_janelas: bool) -> 
 
     demanda = pd.to_numeric(pontos["Demanda"], errors="coerce").fillna(0).astype(int).to_numpy()[ordem]
     servico = pd.to_numeric(pontos["Atendimento (min)"], errors="coerce").fillna(0).to_numpy(float)[ordem]
-    jini = np.zeros(len(ordem))
-    jfim = np.full(len(ordem), HORIZONTE)
     for novo, antigo in enumerate(ordem):
         if eh_dep[antigo]:
             demanda[novo], servico[novo] = 0, 0.0
-            continue
-        abre = minutos(pontos["Abre"].iloc[antigo])
-        fecha = minutos(pontos["Fecha"].iloc[antigo])
-        if abre is not None:
-            jini[novo] = abre
-        if fecha is not None:
-            jfim[novo] = fecha
 
     nome_para_indice = {enderecos[k]: k for k in range(n_dep)}
     tipos = []
@@ -384,8 +368,8 @@ def montar_problema(frota: pd.DataFrame, retornar: bool, usar_janelas: bool) -> 
 
     p = Problema(nomes=enderecos, depositos=list(range(n_dep)),
                  clientes=list(range(n_dep, len(ordem))), demanda=demanda, servico=servico,
-                 janela_ini=jini, janela_fim=jfim, dist=dist, tempo=tempo, tipos=tipos,
-                 retornar=retornar, usar_janelas=usar_janelas)
+                 janela_ini=np.zeros(len(ordem)), janela_fim=np.full(len(ordem), HORIZONTE),
+                 dist=dist, tempo=tempo, tipos=tipos, retornar=retornar)
     return p, coords, enderecos
 
 
@@ -403,10 +387,8 @@ def diagnostico(p: Problema) -> list[str]:
             erros.append(f"'{p.nomes[c]}' pede {p.dem[c]} unidades, mais que o maior veículo "
                          f"({maior}).")
         elif all(avaliar_rota(p, k, [c]) is None for k in range(len(p.tipos))):
-            motivo = (f"a janela {hora(p.jini[c])}–{hora(p.jfim[c])}" if p.usar_janelas
-                      else "a jornada dos veículos")
-            erros.append(f"Nenhum veículo consegue atender '{p.nomes[c]}' sozinho respeitando "
-                         f"{motivo}.")
+            erros.append(f"Nenhum veículo consegue atender '{p.nomes[c]}' sozinho dentro da "
+                         "jornada. Aumente o horário de fim da jornada.")
     return erros
 
 
@@ -445,10 +427,6 @@ AJUDA_OPCOES = """
 depósito. Desligado, termina no último cliente (ex.: o motorista leva o veículo
 para casa) e a volta não é cobrada.
 
-**Respeitar janelas de atendimento** — usa os horários *Abre* e *Fecha* da
-etapa 1. O veículo pode chegar antes e esperar abrir, mas nunca depois de
-fechar. Só fica disponível se algum cliente tiver horário.
-
 **Método**
 - **GRASP + VRPSolverEasy (recomendado)**: o GRASP (heurística do trabalho 4)
   acha uma boa solução em segundos; o VRPSolverEasy (método exato) tenta
@@ -472,8 +450,6 @@ def etapa_frota():
     eh_dep = pontos["Depósito"].fillna(False).astype(bool)
     nomes_depositos = pontos.loc[eh_dep, "Endereço"].tolist()
     demanda = int(pd.to_numeric(pontos.loc[~eh_dep, "Demanda"], errors="coerce").fillna(0).sum())
-    tem_janelas = (pontos.loc[~eh_dep, ["Abre", "Fecha"]].astype(str)
-                   .apply(lambda c: c.str.strip() != "").any().any())
 
     st.caption(f"Matriz de distâncias: **{m['fonte']}** · {len(pontos)} pontos")
     if not m["fonte"].startswith("ruas"):
@@ -522,10 +498,6 @@ def etapa_frota():
         retornar = st.toggle("Veículos retornam ao depósito", value=True,
                              help="Desligado: a rota termina no último cliente e a volta "
                                   "não é cobrada.")
-        usar_janelas = st.toggle("Respeitar janelas de atendimento", value=bool(tem_janelas),
-                                 disabled=not tem_janelas,
-                                 help="Usa os horários Abre/Fecha da etapa 1. Só disponível se "
-                                      "algum cliente tiver horário preenchido.")
     with col2:
         metodo = st.radio("Método", [
             "GRASP + VRPSolverEasy (recomendado)", "Só VRPSolverEasy", "Só GRASP"],
@@ -537,7 +509,7 @@ def etapa_frota():
         tempo_grasp = st.slider("Tempo do GRASP (s)", 1, 30, 5,
                                 help="Quanto mais tempo, mais tentativas a heurística faz.")
 
-    p, coords, enderecos = montar_problema(frota, retornar, usar_janelas)
+    p, coords, enderecos = montar_problema(frota, retornar)
     capacidade = p.capacidade_total
     cor = "green" if capacidade >= demanda else "red"
     st.markdown(f"Capacidade da frota: **:{cor}[{capacidade}]** · Demanda: **{demanda}** · "
