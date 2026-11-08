@@ -39,10 +39,15 @@ Etapa 3  GRASP + VRPSolverEasy  →  rotas no mapa, ordem de visita, Excel, Goog
    opcionais. Clique em **Geocodificar**, confira os pontos no mapa e corrija a
    latitude/longitude de algum que tenha caído no lugar errado.
 2. **Frota** — cadastre os tipos de veículo. Escolha se os veículos voltam ao
-   depósito e se as janelas de horário devem ser respeitadas.
+   depósito e se as janelas de horário devem ser respeitadas. O botão **ⓘ**
+   explica cada coluna, com um exemplo de como o custo é calculado.
 3. **Rotas** — o mapa mostra cada veículo numa cor, com as paradas numeradas
    na ordem de visita. Clique numa parada para ver o horário de chegada.
    Baixe o plano em Excel ou abra a rota direto no Google Maps.
+
+Os botões no topo de cada tela (e as etapas na barra lateral) voltam às etapas
+anteriores sem perder o que foi preenchido; **🏠 Novo roteiro** apaga tudo e
+volta à tela inicial.
 
 ---
 

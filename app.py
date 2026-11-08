@@ -134,6 +134,37 @@ def ir(etapa: int):
     st.session_state.etapa = etapa
 
 
+def recomecar():
+    for chave in list(st.session_state.keys()):
+        del st.session_state[chave]
+
+
+def alcancavel(etapa: int) -> bool:
+    """Só dá para ir a uma etapa cujos dados já existem."""
+    return etapa == 1 or (etapa == 2 and "matriz" in st.session_state) or \
+        (etapa == 3 and "resultado" in st.session_state)
+
+
+NOMES_ETAPAS = ["Pontos", "Frota", "Rotas"]
+
+
+def navegacao(atual: int):
+    """Botões no topo da página para voltar às etapas anteriores ou começar de novo."""
+    colunas = st.columns([1.2] * (atual - 1) + [1.4, 6 - atual])
+    for k in range(1, atual):
+        colunas[k - 1].button(f"← {k}. {NOMES_ETAPAS[k - 1]}", on_click=ir, args=(k,),
+                              width="stretch", key=f"nav_{atual}_{k}")
+    colunas[atual - 1].button("🏠 Novo roteiro", on_click=recomecar, width="stretch",
+                              key=f"nav_{atual}_inicio",
+                              help="Apaga tudo e volta para a tela inicial.")
+
+
+def ajuda(texto: str):
+    """Botão ⓘ que abre uma explicação."""
+    with st.popover("ⓘ", help="O que é isto?"):
+        st.markdown(texto)
+
+
 # ---------------------------------------------------------------------------
 # Barra lateral
 # ---------------------------------------------------------------------------
@@ -142,15 +173,13 @@ with st.sidebar:
     st.markdown("### 🚚 Roteirizador CVRP")
     st.caption("Tópicos Especiais · UFF  \nVictor Balieiro e Fabiano Lucas")
 
-    nomes_etapas = ["Pontos", "Frota", "Rotas"]
-    for k, nome in enumerate(nomes_etapas, start=1):
-        if k < st.session_state.etapa:
-            st.markdown(f"✅ {k}. {nome}")
-        elif k == st.session_state.etapa:
-            st.markdown(f"**▶ {k}. {nome}**")
-        else:
-            st.markdown(f"<span style='opacity:.5'>○ {k}. {nome}</span>",
-                        unsafe_allow_html=True)
+    for k, nome in enumerate(NOMES_ETAPAS, start=1):
+        atual = k == st.session_state.etapa
+        marca = "▶" if atual else ("✅" if alcancavel(k) else "○")
+        st.button(f"{marca} {k}. {nome}", on_click=ir, args=(k,), width="stretch",
+                  type="primary" if atual else "tertiary", disabled=not alcancavel(k),
+                  key=f"lateral_{k}")
+    st.caption("Clique numa etapa já feita para voltar a ela.")
 
     st.divider()
     cidade = st.text_input("Cidade padrão dos endereços", value="Niterói, RJ",
@@ -169,10 +198,7 @@ with st.sidebar:
         ir(1)
         st.rerun()
 
-    if st.button("↺ Recomeçar", width="stretch"):
-        for chave in list(st.session_state.keys()):
-            del st.session_state[chave]
-        st.rerun()
+    st.button("🏠 Novo roteiro (recomeçar)", on_click=recomecar, width="stretch")
 
     with st.expander("Como funciona"):
         st.markdown(
@@ -384,8 +410,63 @@ def diagnostico(p: Problema) -> list[str]:
     return erros
 
 
+AJUDA_FROTA = """
+**Cada linha é um _tipo_ de veículo.** Três vans iguais = uma linha com
+Quantidade 3. Dois modelos diferentes = duas linhas.
+
+| Coluna | O que é | Exemplo |
+|---|---|---|
+| **Tipo** | Um nome para você identificar | Van |
+| **Capacidade** | Quanto cabe em **um** veículo, na mesma unidade da *Demanda* da etapa 1 (caixas, kg, volumes…) | 300 |
+| **Quantidade** | Quantos veículos desse tipo você tem. **0 = não usar** | 3 |
+| **Custo fixo** | Pago uma vez por veículo que sai (diária do motorista, aluguel). Por isso o app evita sair com veículo à toa | R$ 80 |
+| **Custo por km** | Combustível, pneu, manutenção | R$ 1,20 |
+| **Custo por hora** | Hora do motorista, sobre o tempo dirigindo | R$ 25 |
+| **Depósito** | De onde o veículo sai (e para onde volta) | o ponto marcado como depósito |
+| **Início / Fim da jornada** | Horário em que o veículo pode rodar (HH:MM) | 07:00 e 19:00 |
+
+**Como o custo de uma rota é calculado**
+
+custo fixo + km rodados × custo por km + horas dirigindo × custo por hora
+
+Ex.: uma van que roda 40 km em 1h30 custa 80 + 40 × 1,20 + 1,5 × 25 = **R$ 165,50**.
+O app escolhe as rotas que somam o **menor custo total**.
+
+**Editar a tabela:** clique numa célula para mudar o valor. Para incluir um tipo,
+use a linha vazia no fim da tabela. Para apagar, marque a caixinha à esquerda
+da linha e clique na lixeira.
+
+O *Caminhão 3/4* vem com Quantidade 0 só de exemplo: mude para 1 para usar
+a frota mista (o cálculo exato fica mais demorado).
+"""
+
+AJUDA_OPCOES = """
+**Veículos retornam ao depósito** — ligado, cada rota termina de volta no
+depósito. Desligado, termina no último cliente (ex.: o motorista leva o veículo
+para casa) e a volta não é cobrada.
+
+**Respeitar janelas de atendimento** — usa os horários *Abre* e *Fecha* da
+etapa 1. O veículo pode chegar antes e esperar abrir, mas nunca depois de
+fechar. Só fica disponível se algum cliente tiver horário.
+
+**Método**
+- **GRASP + VRPSolverEasy (recomendado)**: o GRASP (heurística do trabalho 4)
+  acha uma boa solução em segundos; o VRPSolverEasy (método exato) tenta
+  melhorá-la ou **prova que é a melhor possível**.
+- **Só GRASP**: mais rápido, mas sem garantia de ser a melhor.
+- **Só VRPSolverEasy**: o método exato sem a ajuda da heurística.
+
+**Tempos** — quanto cada método pode rodar, no máximo. No exemplo de Niterói o
+ótimo sai em cerca de 1 s. Só vale aumentar se o resultado mostrar um *gap*
+(diferença para o ótimo) que você queira fechar.
+"""
+
+
 def etapa_frota():
     st.title("Etapa 2 · Frota")
+    navegacao(2)
+    st.write("Cadastre os veículos que vão fazer as entregas e escolha as opções do "
+             "cálculo. Na dúvida, clique no **ⓘ** ao lado de cada parte.")
     m = st.session_state.matriz
     pontos = m["pontos"]
     eh_dep = pontos["Depósito"].fillna(False).astype(bool)
@@ -399,38 +480,62 @@ def etapa_frota():
         st.warning("O serviço de rotas não respondeu; as distâncias são uma aproximação "
                    "em linha reta. Volte à etapa 1 e confirme de novo para tentar outra vez.")
 
+    titulo, botao = st.columns([12, 1], vertical_alignment="bottom")
+    titulo.subheader("Veículos disponíveis")
+    with botao:
+        ajuda(AJUDA_FROTA)
+    st.caption("Passe o mouse sobre o nome de uma coluna para ver o que ela significa.")
+
     frota = estado("frota", frota_padrao(nomes_depositos))
     frota.loc[~frota["Depósito"].isin(nomes_depositos), "Depósito"] = nomes_depositos[0]
     frota = st.data_editor(
         frota, num_rows="dynamic", width="stretch", key="editor_frota",
         column_config={
-            "Capacidade": st.column_config.NumberColumn(min_value=1, step=1, format="%d"),
-            "Quantidade": st.column_config.NumberColumn(min_value=0, step=1, format="%d"),
+            "Tipo": st.column_config.TextColumn(
+                help="Nome do tipo de veículo, para você identificar (ex.: Van)."),
+            "Capacidade": st.column_config.NumberColumn(min_value=1, step=1, format="%d",
+                help="Quanto cabe em UM veículo, na mesma unidade da Demanda da etapa 1."),
+            "Quantidade": st.column_config.NumberColumn(min_value=0, step=1, format="%d",
+                help="Quantos veículos deste tipo existem. 0 = não usar este tipo."),
             "Custo fixo (R$)": st.column_config.NumberColumn(min_value=0.0, format="%.2f",
-                help="Pago por veículo que sair: diária do motorista, depreciação…"),
+                help="Pago uma vez por veículo que sai: diária do motorista, aluguel…"),
             "Custo por km (R$)": st.column_config.NumberColumn(min_value=0.0, format="%.2f",
-                help="Combustível, pneus, manutenção"),
+                help="Por km rodado: combustível, pneus, manutenção."),
             "Custo por hora (R$)": st.column_config.NumberColumn(min_value=0.0, format="%.2f",
-                help="Sobre o tempo dirigindo"),
-            "Depósito": st.column_config.SelectboxColumn(options=nomes_depositos, required=True),
-            "Início da jornada": st.column_config.TextColumn(help="HH:MM"),
-            "Fim da jornada": st.column_config.TextColumn(help="HH:MM"),
+                help="Por hora dirigindo: salário do motorista."),
+            "Depósito": st.column_config.SelectboxColumn(options=nomes_depositos, required=True,
+                help="De onde o veículo sai e para onde volta."),
+            "Início da jornada": st.column_config.TextColumn(
+                help="A partir de que horas o veículo pode sair (HH:MM, ex.: 07:00)."),
+            "Fim da jornada": st.column_config.TextColumn(
+                help="Até que horas o veículo precisa terminar a rota (HH:MM, ex.: 19:00)."),
         })
     st.session_state.frota = frota
 
+    titulo, botao = st.columns([12, 1], vertical_alignment="bottom")
+    titulo.subheader("Opções do cálculo")
+    with botao:
+        ajuda(AJUDA_OPCOES)
+
     col1, col2 = st.columns(2)
     with col1:
-        retornar = st.toggle("Veículos retornam ao depósito", value=True)
+        retornar = st.toggle("Veículos retornam ao depósito", value=True,
+                             help="Desligado: a rota termina no último cliente e a volta "
+                                  "não é cobrada.")
         usar_janelas = st.toggle("Respeitar janelas de atendimento", value=bool(tem_janelas),
                                  disabled=not tem_janelas,
-                                 help="Só disponível se algum cliente tiver Abre/Fecha preenchido.")
+                                 help="Usa os horários Abre/Fecha da etapa 1. Só disponível se "
+                                      "algum cliente tiver horário preenchido.")
     with col2:
         metodo = st.radio("Método", [
             "GRASP + VRPSolverEasy (recomendado)", "Só VRPSolverEasy", "Só GRASP"],
             help="No recomendado, o GRASP acha uma solução em segundos e o VRPSolverEasy "
                  "tenta melhorá-la ou provar que ela é ótima.")
-        tempo_exato = st.slider("Tempo máximo do VRPSolverEasy (s)", 10, 300, 60, 10)
-        tempo_grasp = st.slider("Tempo do GRASP (s)", 1, 30, 5)
+        tempo_exato = st.slider("Tempo máximo do VRPSolverEasy (s)", 10, 300, 60, 10,
+                                help="Se acabar antes de provar o ótimo, o app mostra a "
+                                     "melhor solução achada e o gap.")
+        tempo_grasp = st.slider("Tempo do GRASP (s)", 1, 30, 5,
+                                help="Quanto mais tempo, mais tentativas a heurística faz.")
 
     p, coords, enderecos = montar_problema(frota, retornar, usar_janelas)
     capacidade = p.capacidade_total
@@ -488,6 +593,7 @@ def etapa_rotas():
     sol = solucoes[r["escolhida"]]
 
     st.title("Etapa 3 · Rotas")
+    navegacao(3)
 
     erros = verificar(p, sol)
     if sol.otima:
@@ -572,11 +678,12 @@ def etapa_rotas():
                      width="stretch")
 
     planilha = exportar.planilha(p, sol, enderecos, coords, tabela_comparacao(solucoes))
-    a, b, _ = st.columns([1.3, 1.3, 4])
+    a, b, c, _ = st.columns([1.3, 1.3, 1.3, 2.7])
     a.download_button("⬇️ Baixar plano (Excel)", planilha, "plano_de_rotas.xlsx",
                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                       type="primary", width="stretch")
     b.button("← Ajustar frota", on_click=ir, args=(2,), width="stretch")
+    c.button("🏠 Novo roteiro", on_click=recomecar, width="stretch", key="fim_inicio")
 
 
 def tabela_comparacao(solucoes) -> pd.DataFrame:

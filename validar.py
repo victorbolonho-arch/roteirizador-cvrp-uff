@@ -213,6 +213,17 @@ def testar_app():
     checar(any("ótima" in s.value.lower() for s in at.success),
            "o exemplo termina com solução ótima provada")
 
+    [b for b in at.button if b.label == "← 2. Frota"][0].click().run()
+    checar(not at.exception and at.title[0].value.startswith("Etapa 2"),
+           "da etapa 3 dá para voltar à frota")
+    [b for b in at.sidebar.button if "3. Rotas" in b.label][0].click().run()
+    checar(not at.exception and at.title[0].value.startswith("Etapa 3"),
+           "e voltar às rotas pela barra lateral, sem recalcular")
+    [b for b in at.button if b.label == "🏠 Novo roteiro"][0].click().run()
+    checar(not at.exception and at.title[0].value.startswith("Etapa 1")
+           and "resultado" not in at.session_state,
+           "'Novo roteiro' volta à tela inicial e apaga o cálculo")
+
 
 def main() -> int:
     random.seed(0)
