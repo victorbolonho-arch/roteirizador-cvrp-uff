@@ -35,7 +35,9 @@ Etapa 3  GRASP + VRPSolverEasy  →  rotas no mapa, ordem de visita, Excel, Goog
 ## Como usar
 
 1. **Pontos** — digite os endereços (ou importe uma planilha, ou clique em
-   *Carregar exemplo de Niterói*). Marque o depósito. Clique em
+   *Carregar exemplo de Niterói*). Marque o depósito. Na barra lateral,
+   escolha a **cidade padrão** (a setinha mostra outras cidades, e dá para
+   digitar qualquer uma) e clique em **Aplicar**. Clique em
    **Geocodificar**, confira os pontos no mapa e corrija a latitude/longitude
    de algum que tenha caído no lugar errado.
 2. **Frota** — cadastre os tipos de veículo e escolha se eles voltam ao

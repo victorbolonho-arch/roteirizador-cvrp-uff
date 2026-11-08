@@ -203,7 +203,12 @@ def testar_app():
     from streamlit.testing.v1 import AppTest
     at = AppTest.from_file(str(Path(__file__).with_name("app.py")), default_timeout=300)
     at.run()
+    at.sidebar.selectbox[0].select("Rio de Janeiro, RJ").run()
+    [b for b in at.sidebar.button if "Aplicar" in b.label][0].click().run()
+    checar(at.session_state.cidade == "Rio de Janeiro, RJ", "'Aplicar cidade' troca a cidade padrão")
     [b for b in at.sidebar.button if "exemplo" in b.label][0].click().run()
+    checar(at.session_state.cidade == "Niterói, RJ",
+           "carregar o exemplo volta a cidade para Niterói (os endereços dele não a dizem)")
     [b for b in at.button if "Geocodificar" in b.label][0].click().run()
     checar(not at.exception and not at.error, "etapa 1: exemplo geocodificado sem erros")
     [b for b in at.button if "Confirmar pontos" in b.label][0].click().run()

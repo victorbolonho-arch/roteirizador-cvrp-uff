@@ -125,9 +125,45 @@ estado("etapa", 1)
 estado("pontos", tabela_vazia())
 estado("versao_tabela", 0)
 
+# Opções da lista de cidades padrão. Dá para digitar outra direto na lista.
+SEM_CIDADE = "Nenhuma (os endereços já dizem a cidade)"
+CIDADES = ["Niterói, RJ", "Rio de Janeiro, RJ", "São Gonçalo, RJ", "Maricá, RJ",
+           "Itaboraí, RJ", "Duque de Caxias, RJ", "Nova Iguaçu, RJ", "Petrópolis, RJ",
+           "São Paulo, SP", "Belo Horizonte, MG", "Vitória, ES", "Curitiba, PR",
+           "Porto Alegre, RS", "Brasília, DF", "Salvador, BA", "Recife, PE",
+           "Fortaleza, CE", SEM_CIDADE]
+estado("cidade", CIDADES[0])         # a cidade em uso; a lista só muda ao clicar Aplicar
+
 
 def ir(etapa: int):
     st.session_state.etapa = etapa
+
+
+def aplicar_cidade():
+    """Passa a usar a cidade escolhida; endereços já buscados são buscados de novo."""
+    escolha = (st.session_state.cidade_escolha or "").strip()
+    st.session_state.cidade = escolha or SEM_CIDADE
+    if "locais" in st.session_state:
+        for chave in ("locais", "matriz", "resultado"):
+            st.session_state.pop(chave, None)
+        st.session_state.regeocodificar = True
+        ir(1)
+    st.toast(f"Cidade padrão: {st.session_state.cidade}", icon="📍")
+
+
+def cidade_em_uso() -> str:
+    """A cidade que completa os endereços ('' quando nenhuma)."""
+    return "" if st.session_state.cidade == SEM_CIDADE else st.session_state.cidade
+
+
+def carregar_exemplo():
+    st.session_state.pontos = pd.read_csv(EXEMPLO)
+    st.session_state.versao_tabela += 1
+    for chave in ("locais", "matriz", "frota", "resultado"):
+        st.session_state.pop(chave, None)
+    # Os endereços do exemplo não dizem a cidade: dependem de Niterói como padrão.
+    st.session_state.cidade = st.session_state.cidade_escolha = "Niterói, RJ"
+    ir(1)
 
 
 def recomecar():
@@ -178,21 +214,24 @@ with st.sidebar:
     st.caption("Clique numa etapa já feita para voltar a ela.")
 
     st.divider()
-    cidade = st.text_input("Cidade padrão dos endereços", value="Niterói, RJ",
-                           help="Acrescentada aos endereços que não citam a cidade — "
-                                "'Rua da Conceição 100' existe em dezenas de cidades.")
+    opcoes = CIDADES if st.session_state.cidade in CIDADES else [st.session_state.cidade] + CIDADES
+    escolha = st.selectbox(
+        "Cidade padrão dos endereços", opcoes, index=opcoes.index(st.session_state.cidade),
+        key="cidade_escolha", accept_new_options=True,
+        help="Completa os endereços que não dizem a cidade ('Rua da Conceição 100' existe "
+             "em dezenas de cidades). Clique na setinha para ver outras cidades, ou digite "
+             "o nome de outra. Se o endereço disser a cidade, vale a do endereço.")
+    st.button("✔ Aplicar cidade", on_click=aplicar_cidade, width="stretch",
+              disabled=(escolha or SEM_CIDADE) == st.session_state.cidade,
+              help="Passa a usar esta cidade. Se os endereços já foram buscados, "
+                   "eles são buscados de novo.")
+    st.caption(f"Em uso: **{st.session_state.cidade}**")
     fonte_distancia = st.radio(
         "Distâncias", ["Pelas ruas (OSRM)", "Linha reta corrigida"],
         help="Pelas ruas usa o traçado real e as mãos de direção. A linha reta é só "
              "uma aproximação para quando não houver internet.")
 
-    if st.button("📍 Carregar exemplo de Niterói", width="stretch"):
-        st.session_state.pontos = pd.read_csv(EXEMPLO)
-        st.session_state.versao_tabela += 1
-        for chave in ("locais", "matriz", "frota", "resultado"):
-            st.session_state.pop(chave, None)
-        ir(1)
-        st.rerun()
+    st.button("📍 Carregar exemplo de Niterói", on_click=carregar_exemplo, width="stretch")
 
     st.button("🏠 Novo roteiro (recomeçar)", on_click=recomecar, width="stretch")
 
@@ -255,7 +294,9 @@ def etapa_pontos():
     c3.metric("Demanda total", int(pd.to_numeric(pontos["Demanda"], errors="coerce").fillna(0)
                                    [~pontos["Depósito"].fillna(False).astype(bool)].sum()))
 
-    if st.button("🌎 Geocodificar endereços", type="primary"):
+    # "Aplicar cidade" com os endereços já buscados pede uma nova busca.
+    refazer = st.session_state.pop("regeocodificar", False) and not pontos.empty
+    if st.button("🌎 Geocodificar endereços", type="primary") or refazer:
         if pontos.empty:
             st.error("Informe ao menos um endereço.")
             return
@@ -264,7 +305,7 @@ def etapa_pontos():
         locais = []
         for k, endereco in enumerate(pontos["Endereço"]):
             barra.progress((k + 1) / len(pontos), text=f"Geocodificando {endereco}")
-            locais.append(geo.geocodificar(endereco, cidade))
+            locais.append(geo.geocodificar(endereco, cidade_em_uso()))
         barra.empty()
         st.session_state.locais = locais
         st.session_state.pop("matriz", None)
