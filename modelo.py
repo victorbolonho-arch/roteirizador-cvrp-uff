@@ -9,6 +9,9 @@ valeria nada.
 
 Unidades: distância em km, tempo em minutos contados a partir da meia-noite
 (08:00 = 480), dinheiro em reais.
+
+Dois objetivos: "distancia" é o CVRP clássico (minimizar os km rodados; os
+custos da frota não entram) e "custo" minimiza custo fixo + km + hora em R$.
 """
 
 from __future__ import annotations
@@ -48,6 +51,7 @@ class Problema:
     tipos: list[TipoVeiculo]
     retornar: bool = True             # o veículo volta ao depósito no fim
     usar_janelas: bool = False
+    objetivo: str = "custo"           # "distancia" (CVRP clássico) ou "custo"
 
     def __post_init__(self):
         # Listas de listas são bem mais rápidas que numpy para acessar um
@@ -66,6 +70,63 @@ class Problema:
     @property
     def capacidade_total(self) -> int:
         return int(sum(t.capacidade * t.quantidade for t in self.tipos))
+
+    @property
+    def unidade(self) -> str:
+        """Unidade do valor da função objetivo."""
+        return "km" if self.objetivo == "distancia" else "R$"
+
+    # -- Instância em JSON ---------------------------------------------------
+    #
+    # A fronteira entre o módulo geográfico e o de otimização: tudo o que o
+    # solver precisa (matriz, demandas, frota) num arquivo que dá para gerar,
+    # guardar e resolver sem endereços nem internet (ver resolver_instancia.py).
+
+    def para_dict(self, coords: list[tuple[float, float]] | None = None) -> dict:
+        pontos = []
+        for i, nome in enumerate(self.nomes):
+            ponto = {"id": i, "nome": nome, "deposito": i in self.depositos,
+                     "demanda": self.dem[i], "atendimento_min": self.srv[i]}
+            if self.usar_janelas:
+                ponto["janela_min"] = [self.jini[i], self.jfim[i]]
+            if coords is not None:
+                ponto["lat"], ponto["lon"] = coords[i]
+            pontos.append(ponto)
+        return {
+            "objetivo": self.objetivo, "retornar_ao_deposito": self.retornar,
+            "usar_janelas": self.usar_janelas, "pontos": pontos,
+            "frota": [{"tipo": t.nome, "capacidade": t.capacidade, "quantidade": t.quantidade,
+                       "custo_fixo": t.custo_fixo, "custo_km": t.custo_km,
+                       "custo_hora": t.custo_hora, "deposito": t.deposito,
+                       "jornada_min": [t.jornada_ini, t.jornada_fim]} for t in self.tipos],
+            "distancia_km": self.dist.tolist(),
+            "tempo_min": self.tempo.tolist(),
+        }
+
+    @classmethod
+    def de_dict(cls, d: dict) -> "Problema":
+        pontos = sorted(d["pontos"], key=lambda x: x["id"])
+        n = len(pontos)
+        janelas = [x.get("janela_min", [0.0, HORIZONTE]) for x in pontos]
+        return cls(
+            nomes=[x["nome"] for x in pontos],
+            depositos=[x["id"] for x in pontos if x["deposito"]],
+            clientes=[x["id"] for x in pontos if not x["deposito"]],
+            demanda=np.array([x["demanda"] for x in pontos]),
+            servico=np.array([x.get("atendimento_min", 0.0) for x in pontos], dtype=float),
+            janela_ini=np.array([j[0] for j in janelas], dtype=float),
+            janela_fim=np.array([j[1] for j in janelas], dtype=float),
+            dist=np.array(d["distancia_km"], dtype=float).reshape(n, n),
+            tempo=np.array(d.get("tempo_min", np.zeros((n, n))), dtype=float).reshape(n, n),
+            tipos=[TipoVeiculo(t["tipo"], int(t["capacidade"]), int(t["quantidade"]),
+                               float(t.get("custo_fixo", 0)), float(t.get("custo_km", 0)),
+                               float(t.get("custo_hora", 0)), int(t["deposito"]),
+                               *map(float, t.get("jornada_min", [0.0, HORIZONTE])))
+                   for t in d["frota"]],
+            retornar=bool(d.get("retornar_ao_deposito", True)),
+            usar_janelas=bool(d.get("usar_janelas", False)),
+            objetivo=d.get("objetivo", "custo"),
+        )
 
 
 @dataclass
@@ -161,12 +222,25 @@ def avaliar_rota(p: Problema, tipo: int, seq: list[int], detalhar: bool = False
     if relogio > t.jornada_fim + FOLGA:
         return None
 
-    custo = t.custo_fixo + t.custo_km * distancia + t.custo_hora * viagem / 60.0
+    if p.objetivo == "distancia":
+        custo = distancia
+    else:
+        custo = t.custo_fixo + t.custo_km * distancia + t.custo_hora * viagem / 60.0
     if not detalhar:
         return custo
     return Rota(tipo=tipo, clientes=list(seq), custo=custo, distancia=distancia,
                 tempo_viagem=viagem, carga=carga, chegada=chegadas, inicio=inicios,
                 saida_deposito=t.jornada_ini, fim=relogio)
+
+
+def melhor_solucao(solucoes: dict[str, Solucao]) -> str | None:
+    """Nome da melhor solução: a que deixa menos clientes sem atendimento; entre
+    essas, a de menor valor; no empate, a que tem prova de otimalidade."""
+    validas = {k: s for k, s in solucoes.items() if s.rotas}
+    if not validas:
+        return None
+    return min(validas, key=lambda k: (len(validas[k].nao_atendidos),
+                                       round(validas[k].custo, 4), not validas[k].otima))
 
 
 def verificar(p: Problema, sol: Solucao) -> list[str]:

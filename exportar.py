@@ -9,6 +9,7 @@ do motorista com a navegação passo a passo.
 from __future__ import annotations
 
 import io
+import json
 from urllib.parse import quote
 
 import pandas as pd
@@ -23,6 +24,28 @@ PONTOS_POR_LINK = 10
 def _hora(minutos: float) -> str:
     minutos = int(round(minutos))
     return f"{minutos // 60 % 24:02d}:{minutos % 60:02d}"
+
+
+def solucao_dict(p: Problema, sol: Solucao) -> dict:
+    """A solução em formato simples: as sequências de visita e os indicadores."""
+    return {
+        "metodo": sol.metodo, "status": sol.status, "objetivo": p.objetivo,
+        "unidade": p.unidade, "valor": round(sol.custo, 4), "otima": sol.otima,
+        "limitante_inferior": None if sol.limitante_inferior is None
+        else round(sol.limitante_inferior, 4),
+        "gap_percentual": None if sol.gap is None else round(sol.gap, 4),
+        "distancia_km": round(sol.distancia, 4), "tempo_s": round(sol.tempo_s, 2),
+        "nao_atendidos": sol.nao_atendidos,
+        "rotas": [{
+            "veiculo": p.tipos[r.tipo].nome, "deposito": p.tipos[r.tipo].deposito,
+            "sequencia": r.clientes, "nomes": [p.nomes[c] for c in r.clientes],
+            "carga": r.carga, "distancia_km": round(r.distancia, 4), "valor": round(r.custo, 4),
+        } for r in sol.rotas],
+    }
+
+
+def json_bytes(dados: dict) -> bytes:
+    return json.dumps(dados, ensure_ascii=False, indent=1).encode("utf-8")
 
 
 def links_google_maps(p: Problema, sol: Solucao, coords) -> list[list[str]]:
@@ -89,7 +112,7 @@ def tabela_paradas(p: Problema, sol: Solucao, enderecos: list[str]) -> pd.DataFr
 
 def tabela_rotas(p: Problema, sol: Solucao) -> pd.DataFrame:
     """Uma linha por veículo usado."""
-    return pd.DataFrame([{
+    tabela = pd.DataFrame([{
         "Rota": k + 1,
         "Veículo": p.tipos[r.tipo].nome,
         "Depósito": p.nomes[p.tipos[r.tipo].deposito],
@@ -103,17 +126,22 @@ def tabela_rotas(p: Problema, sol: Solucao) -> pd.DataFrame:
         "Término": _hora(r.fim),
         "Custo (R$)": round(r.custo, 2),
     } for k, r in enumerate(sol.rotas)])
+    if p.objetivo == "distancia" and not tabela.empty:
+        tabela = tabela.drop(columns=["Custo (R$)"])      # o valor já é a distância
+    return tabela
 
 
 def planilha(p: Problema, sol: Solucao, enderecos: list[str], coords,
              comparacao: pd.DataFrame | None = None) -> bytes:
     """Excel com resumo, rotas, ordem de visita e clientes."""
+    objetivo = ("Menor distância total (CVRP clássico)" if p.objetivo == "distancia"
+                else "Menor custo (R$)")
     resumo = pd.DataFrame({
-        "Indicador": ["Método", "Situação", "Custo total (R$)", "Distância total (km)",
-                      "Veículos usados", "Clientes atendidos", "Clientes não atendidos",
-                      "Limitante inferior (R$)", "Gap para o ótimo (%)",
-                      "Tempo de cálculo (s)"],
-        "Valor": [sol.metodo, sol.status, round(sol.custo, 2), round(sol.distancia, 2),
+        "Indicador": ["Objetivo", "Método", "Situação", f"Valor da solução ({p.unidade})",
+                      "Distância total (km)", "Veículos usados", "Clientes atendidos",
+                      "Clientes não atendidos", f"Limitante inferior ({p.unidade})",
+                      "Gap para o ótimo (%)", "Tempo de cálculo (s)"],
+        "Valor": [objetivo, sol.metodo, sol.status, round(sol.custo, 2), round(sol.distancia, 2),
                   len(sol.rotas), sum(len(r.clientes) for r in sol.rotas),
                   len(sol.nao_atendidos),
                   "" if sol.limitante_inferior is None else round(sol.limitante_inferior, 2),

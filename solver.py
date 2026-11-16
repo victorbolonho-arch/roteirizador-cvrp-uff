@@ -69,14 +69,16 @@ def _montar(p: Problema, tempo_limite: float, limitante: float | None,
             m.add_link(start_point_id=i, end_point_id=j, is_directed=True,
                        distance=distancia, time=tempo)
 
+    distancia_pura = p.objetivo == "distancia"     # CVRP clássico: só os km contam
     for k, t in enumerate(p.tipos):
         m.add_vehicle_type(
             id=k + 1, name=t.nome,
             start_point_id=t.deposito, end_point_id=t.deposito,
             capacity=t.capacidade,
             max_number=len(p.clientes) if frota_livre else t.quantidade,
-            fixed_cost=t.custo_fixo, var_cost_dist=t.custo_km,
-            var_cost_time=t.custo_hora / 60.0,
+            fixed_cost=0.0 if distancia_pura else t.custo_fixo,
+            var_cost_dist=1.0 if distancia_pura else t.custo_km,
+            var_cost_time=0.0 if distancia_pura else t.custo_hora / 60.0,
             tw_begin=t.jornada_ini, tw_end=t.jornada_fim,
         )
 

@@ -187,6 +187,78 @@ def testar_partida_e_prova():
     checar(s.custo <= g.custo + 1e-9, "o solver nunca piora a solução de partida")
 
 
+def ler_cvrplib(caminho) -> tuple[Problema, float]:
+    """Lê uma instância .vrp da CVRPLIB (EUC_2D) e devolve o problema e o ótimo publicado.
+
+    Distância arredondada como na CVRPLIB: nint(x) = floor(x + 0,5).
+    """
+    import re
+    from pathlib import Path
+    linhas = Path(caminho).read_text().splitlines()
+    cabecalho = {l.split(":")[0].strip(): l.split(":", 1)[1].strip() for l in linhas if ":" in l}
+    otimo = float(re.search(r"Optimal value:\s*(\d+)", cabecalho["COMMENT"]).group(1))
+    caminhoes = int(re.search(r"-k(\d+)", cabecalho["NAME"]).group(1))
+    secoes, atual = {"NODE_COORD_SECTION": [], "DEMAND_SECTION": []}, None
+    for l in linhas:
+        chave = l.strip()
+        if chave in secoes or chave in ("DEPOT_SECTION", "EOF"):
+            atual = chave if chave in secoes else None
+        elif atual and chave:
+            secoes[atual].append([float(x) for x in chave.split()[1:]])
+    xy = np.array(secoes["NODE_COORD_SECTION"])
+    n = len(xy)
+    dist = np.floor(np.sqrt(((xy[:, None, :] - xy[None, :, :]) ** 2).sum(-1)) + 0.5)
+    p = Problema(
+        nomes=[str(i + 1) for i in range(n)], depositos=[0], clientes=list(range(1, n)),
+        demanda=np.array([int(d[0]) for d in secoes["DEMAND_SECTION"]]),
+        servico=np.zeros(n), janela_ini=np.zeros(n), janela_fim=np.full(n, HORIZONTE),
+        dist=dist, tempo=np.zeros((n, n)),
+        tipos=[TipoVeiculo("caminhão", int(cabecalho["CAPACITY"]), caminhoes, 0, 1, 0, 0)],
+        objetivo="distancia")
+    return p, otimo
+
+
+def testar_cvrplib():
+    print("\n7. Instâncias da CVRPLIB (ótimo publicado)")
+    from pathlib import Path
+    for arquivo in sorted(Path(__file__).with_name("dados").joinpath("cvrplib").glob("*.vrp")):
+        p, otimo = ler_cvrplib(arquivo)
+        g = heuristica.grasp(p, tempo_limite=3)
+        s = solver.resolver_exato(p, tempo_limite=60, partida=g)
+        checar(s.otima and abs(s.custo - otimo) < 1e-6 and not verificar(p, s),
+               f"{arquivo.stem}: solver prova {s.custo:.0f} = ótimo publicado {otimo:.0f} "
+               f"({s.tempo_s:.1f} s; GRASP {g.custo:.0f})")
+
+
+def testar_objetivo_e_json():
+    print("\n8. Objetivo distância (CVRP clássico) e instância em JSON")
+    import json
+    import resolver_instancia
+    tipos = [TipoVeiculo("caro", 8, 2, 500.0, 3.0, 9.0, 0),
+             TipoVeiculo("barato", 8, 2, 1.0, 0.5, 0.0, 0)]
+    p = instancia(6, 31, tipos=tipos)
+    p.objetivo = "distancia"
+    d = p.D
+    checar(abs(avaliar_rota(p, 0, [1, 2]) - (d[0][1] + d[1][2] + d[2][0])) < 1e-9,
+           "no objetivo distância, o valor da rota é só a distância (sem custo fixo)")
+    # Mesma capacidade e mesmo depósito: só pela distância, os dois tipos valem
+    # como um tipo só com os 4 veículos — que a força bruta sabe resolver.
+    import copy
+    unico = copy.copy(p)
+    unico.tipos = [TipoVeiculo("qualquer", 8, 4, 0.0, 1.0, 0.0, 0)]
+    verdade = otimo_forca_bruta(unico)
+    s = solver.resolver_exato(p, tempo_limite=30)
+    checar(s.otima and abs(s.custo - verdade) < 1e-4,
+           f"solver = força bruta no objetivo distância ({s.custo:.4f} = {verdade:.4f})")
+
+    copia = Problema.de_dict(json.loads(json.dumps(p.para_dict())))
+    checar(np.allclose(copia.dist, p.dist) and copia.objetivo == p.objetivo
+           and [t.custo_fixo for t in copia.tipos] == [t.custo_fixo for t in p.tipos],
+           "a instância sai e volta do JSON sem perder nada")
+    r = resolver_instancia.resolver(copia, tempo_exato=30, tempo_grasp=1)
+    checar(abs(r.custo - s.custo) < 1e-4, "resolver a instância em JSON dá o mesmo ótimo")
+
+
 def testar_frota_insuficiente():
     print("\n5. Frota insuficiente")
     p = instancia(6, 7)
@@ -217,6 +289,21 @@ def testar_app():
     checar(not at.exception and at.title[0].value.startswith("Etapa 3"), "etapa 3: rotas calculadas")
     checar(any("ótima" in s.value.lower() for s in at.success),
            "o exemplo termina com solução ótima provada")
+    checar(at.metric[0].label == "Distância total",
+           "o objetivo padrão é o CVRP clássico (menor distância)")
+    km_classico = float(at.metric[0].value.split()[0])
+
+    [b for b in at.button if b.label == "← 2. Frota"][0].click().run()
+    at.radio[0].set_value("custo").run()
+    [b for b in at.button if "Calcular rotas" in b.label][0].click().run()
+    # O valor exato muda quando o OpenStreetMap é atualizado (a matriz vem do
+    # OSRM na hora): confere-se a prova de otimalidade, não um número fixo.
+    checar(not at.exception and at.metric[0].label == "Custo total"
+           and any("ótima" in s.value.lower() for s in at.success),
+           f"no objetivo custo, o exemplo também termina com ótimo provado ({at.metric[0].value})")
+    checar(float(at.metric[1].value.split()[0]) >= km_classico - 1e-6,
+           f"o plano de menor custo não roda menos km que o de menor distância "
+           f"({at.metric[1].value} x {km_classico} km)")
 
     [b for b in at.button if b.label == "← 2. Frota"][0].click().run()
     checar(not at.exception and at.title[0].value.startswith("Etapa 2"),
@@ -238,6 +325,8 @@ def main() -> int:
     testar_grasp()
     testar_partida_e_prova()
     testar_frota_insuficiente()
+    testar_cvrplib()
+    testar_objetivo_e_json()
     if "--app" in sys.argv:
         testar_app()
     print("\n" + "-" * 60)

@@ -24,7 +24,7 @@ import geo
 import heuristica
 import mapa
 import solver
-from modelo import HORIZONTE, Problema, TipoVeiculo, avaliar_rota, verificar
+from modelo import HORIZONTE, Problema, TipoVeiculo, avaliar_rota, melhor_solucao, verificar
 
 PASTA = Path(__file__).parent
 EXEMPLO = PASTA / "dados" / "exemplo_niteroi.csv"
@@ -63,6 +63,15 @@ def hora(m: float) -> str:
 
 def brl(valor: float) -> str:
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def valor_objetivo(p: Problema, valor: float) -> str:
+    """O valor da função objetivo na unidade dela: km no CVRP clássico, R$ no custo."""
+    return f"{valor:.1f} km" if p.objetivo == "distancia" else brl(valor)
+
+
+OBJETIVOS = {"distancia": "Menor distância total (CVRP clássico)",
+             "custo": "Menor custo em R$ (fixo + km + hora)"}
 
 
 def tabela_vazia() -> pd.DataFrame:
@@ -370,7 +379,8 @@ def conferir_geocodificacao(pontos: pd.DataFrame):
 # Etapa 2 — Frota
 # ---------------------------------------------------------------------------
 
-def montar_problema(frota: pd.DataFrame, retornar: bool) -> tuple[Problema, list, list[str]]:
+def montar_problema(frota: pd.DataFrame, retornar: bool, objetivo: str = "distancia"
+                    ) -> tuple[Problema, list, list[str]]:
     """Converte as tabelas da interface no `Problema`, com os depósitos na frente."""
     m = st.session_state.matriz
     pontos = m["pontos"]
@@ -410,7 +420,7 @@ def montar_problema(frota: pd.DataFrame, retornar: bool) -> tuple[Problema, list
     p = Problema(nomes=enderecos, depositos=list(range(n_dep)),
                  clientes=list(range(n_dep, len(ordem))), demanda=demanda, servico=servico,
                  janela_ini=np.zeros(len(ordem)), janela_fim=np.full(len(ordem), HORIZONTE),
-                 dist=dist, tempo=tempo, tipos=tipos, retornar=retornar)
+                 dist=dist, tempo=tempo, tipos=tipos, retornar=retornar, objetivo=objetivo)
     return p, coords, enderecos
 
 
@@ -448,7 +458,10 @@ Quantidade 3. Dois modelos diferentes = duas linhas.
 | **Depósito** | De onde o veículo sai (e para onde volta) | o ponto marcado como depósito |
 | **Início / Fim da jornada** | Horário em que o veículo pode rodar (HH:MM) | 07:00 e 19:00 |
 
-**Como o custo de uma rota é calculado**
+**Os custos só contam no objetivo "Menor custo em R$"**. No CVRP clássico
+(menor distância) o app ignora as três colunas de custo e minimiza os km.
+
+No objetivo de custo, o custo de uma rota é
 
 custo fixo + km rodados × custo por km + horas dirigindo × custo por hora
 
@@ -461,6 +474,20 @@ da linha e clique na lixeira.
 
 O *Caminhão 3/4* vem com Quantidade 0 só de exemplo: mude para 1 para usar
 a frota mista (o cálculo exato fica mais demorado).
+"""
+
+AJUDA_OBJETIVO = """
+**Menor distância total (CVRP clássico)** — o problema como definido na
+disciplina: atender todos os clientes, respeitando a capacidade dos veículos,
+rodando o **menor número de km** possível. Os custos da frota não entram.
+
+**Menor custo em R$** — uma extensão mais próxima da operação real: cada veículo
+que sai tem um custo fixo (diária, aluguel), e cada km e cada hora dirigindo
+também custam. Com isso o app pode, por exemplo, preferir rodar alguns km a
+mais para usar um veículo a menos.
+
+Nos dois casos o VRPSolverEasy procura o **ótimo** e, se não der tempo de
+prová-lo, mostra o limitante inferior e o *gap*.
 """
 
 AJUDA_OPCOES = """
@@ -496,6 +523,19 @@ def etapa_frota():
     if not m["fonte"].startswith("ruas"):
         st.warning("O serviço de rotas não respondeu; as distâncias são uma aproximação "
                    "em linha reta. Volte à etapa 1 e confirme de novo para tentar outra vez.")
+
+    titulo, botao = st.columns([12, 1], vertical_alignment="bottom")
+    titulo.subheader("O que otimizar")
+    with botao:
+        ajuda(AJUDA_OBJETIVO)
+    salvo = st.session_state.get("objetivo", "distancia")
+    objetivo = st.radio("Objetivo", list(OBJETIVOS), format_func=OBJETIVOS.get,
+                        index=list(OBJETIVOS).index(salvo), horizontal=True,
+                        label_visibility="collapsed")
+    st.session_state.objetivo = objetivo        # lembra a escolha ao voltar para esta etapa
+    if objetivo == "distancia":
+        st.caption("CVRP clássico: o app minimiza os km rodados. As colunas de custo da "
+                   "frota não entram no cálculo.")
 
     titulo, botao = st.columns([12, 1], vertical_alignment="bottom")
     titulo.subheader("Veículos disponíveis")
@@ -550,7 +590,7 @@ def etapa_frota():
         tempo_grasp = st.slider("Tempo do GRASP (s)", 1, 30, 5,
                                 help="Quanto mais tempo, mais tentativas a heurística faz.")
 
-    p, coords, enderecos = montar_problema(frota, retornar)
+    p, coords, enderecos = montar_problema(frota, retornar, objetivo)
     capacidade = p.capacidade_total
     cor = "green" if capacidade >= demanda else "red"
     st.markdown(f"Capacidade da frota: **:{cor}[{capacidade}]** · Demanda: **{demanda}** · "
@@ -572,7 +612,8 @@ def calcular_rotas(p, coords, enderecos, metodo, tempo_exato, tempo_grasp):
         if metodo != "Só VRPSolverEasy":
             st.write(f"GRASP: construção aleatorizada + busca local por {tempo_grasp} s…")
             solucoes["GRASP"] = heuristica.grasp(p, tempo_limite=tempo_grasp)
-            st.write(f"→ {brl(solucoes['GRASP'].custo)} em {solucoes['GRASP'].iteracoes} iterações")
+            st.write(f"→ {valor_objetivo(p, solucoes['GRASP'].custo)} em "
+                     f"{solucoes['GRASP'].iteracoes} iterações")
         if metodo != "Só GRASP":
             st.write(f"VRPSolverEasy: branch-cut-and-price por até {tempo_exato} s…")
             partida = solucoes.get("GRASP")
@@ -580,15 +621,11 @@ def calcular_rotas(p, coords, enderecos, metodo, tempo_exato, tempo_grasp):
             st.write(f"→ {solucoes['VRPSolverEasy'].status}")
         caixa.update(label="Rotas calculadas", state="complete", expanded=False)
 
-    validas = {k: s for k, s in solucoes.items() if s.rotas}
-    if not validas:
+    melhor = melhor_solucao(solucoes)
+    if melhor is None:
         st.error("Nenhum método encontrou solução. " +
                  " / ".join(f"{k}: {s.status}" for k, s in solucoes.items()))
         return
-    # Fica a de menos clientes sem atendimento; entre essas, a mais barata; e,
-    # no empate de custo, a que vem com prova de otimalidade.
-    melhor = min(validas, key=lambda k: (len(validas[k].nao_atendidos),
-                                         round(validas[k].custo, 4), not validas[k].otima))
     st.session_state.resultado = {"problema": p, "coords": coords, "enderecos": enderecos,
                                   "solucoes": solucoes, "escolhida": melhor}
     ir(3)
@@ -609,13 +646,15 @@ def etapa_rotas():
     navegacao(3)
 
     erros = verificar(p, sol)
+    criterio = "mais curto" if p.objetivo == "distancia" else "mais barato"
+    st.caption(f"Objetivo: **{OBJETIVOS[p.objetivo]}**")
     if sol.otima:
-        st.success("**Solução ótima** — o VRPSolverEasy provou que não existe plano mais "
-                   f"barato com esta frota ({sol.tempo_s:.1f} s).", icon="🏆")
+        st.success(f"**Solução ótima** — o VRPSolverEasy provou que não existe plano {criterio} "
+                   f"com esta frota ({sol.tempo_s:.1f} s).", icon="🏆")
     elif sol.gap is not None:
         st.info(f"Solução viável, no máximo **{sol.gap:.2f}%** acima do ótimo "
-                f"(limitante inferior {brl(sol.limitante_inferior)}). Aumente o tempo do "
-                f"VRPSolverEasy para tentar fechar essa diferença.", icon="📐")
+                f"(limitante inferior {valor_objetivo(p, sol.limitante_inferior)}). Aumente o "
+                f"tempo do VRPSolverEasy para tentar fechar essa diferença.", icon="📐")
     else:
         st.info(f"Solução do {sol.metodo}: {sol.status}", icon="🧭")
     if sol.nao_atendidos:
@@ -627,8 +666,12 @@ def etapa_rotas():
     disponiveis = sum(t.quantidade for t in p.tipos)
     ocupacao = 100.0 * sum(x.carga for x in sol.rotas) / max(1, sum(p.tipos[x.tipo].capacidade for x in sol.rotas))
     k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric("Custo total", brl(sol.custo))
-    k2.metric("Distância", f"{sol.distancia:.1f} km")
+    if p.objetivo == "distancia":
+        k1.metric("Distância total", f"{sol.distancia:.1f} km")
+        k2.metric("Clientes atendidos", f"{sum(len(x.clientes) for x in sol.rotas)}")
+    else:
+        k1.metric("Custo total", brl(sol.custo))
+        k2.metric("Distância", f"{sol.distancia:.1f} km")
     k3.metric("Veículos", f"{usados} de {disponiveis}")
     k4.metric("Dirigindo", f"{sum(x.tempo_viagem for x in sol.rotas) / 60:.1f} h")
     k5.metric("Ocupação média", f"{ocupacao:.0f}%")
@@ -654,8 +697,9 @@ def etapa_rotas():
                 f"<div style='border-left:6px solid {cor};padding:4px 10px;margin-bottom:4px'>"
                 f"<b>Rota {k + 1}</b> — {t.nome}<br>"
                 f"<span style='font-size:.88em'>{len(x.clientes)} paradas · {x.carga}/{t.capacidade} "
-                f"un · {x.distancia:.1f} km<br>{hora(x.saida_deposito)} → {hora(x.fim)} · "
-                f"{brl(x.custo)}</span></div>", unsafe_allow_html=True)
+                f"un · {x.distancia:.1f} km<br>{hora(x.saida_deposito)} → {hora(x.fim)}"
+                + ("" if p.objetivo == "distancia" else f" · {brl(x.custo)}")
+                + "</span></div>", unsafe_allow_html=True)
             for parte, link in enumerate(links[k], start=1):
                 rotulo = "Abrir no Google Maps" if len(links[k]) == 1 else f"Google Maps — trecho {parte}"
                 st.link_button(rotulo, link, width="stretch")
@@ -669,7 +713,7 @@ def etapa_rotas():
     with aba_rotas:
         st.dataframe(exportar.tabela_rotas(p, sol), width="stretch", hide_index=True)
     with aba_metodos:
-        comparacao = tabela_comparacao(solucoes)
+        comparacao = tabela_comparacao(p, solucoes)
         st.dataframe(comparacao, width="stretch", hide_index=True)
         if "GRASP" in solucoes and "VRPSolverEasy" in solucoes and solucoes["VRPSolverEasy"].rotas:
             g, e = solucoes["GRASP"], solucoes["VRPSolverEasy"]
@@ -690,24 +734,33 @@ def etapa_rotas():
         st.dataframe(pd.DataFrame(p.dist.round(2), index=rotulos, columns=rotulos),
                      width="stretch")
 
-    planilha = exportar.planilha(p, sol, enderecos, coords, tabela_comparacao(solucoes))
-    a, b, c, _ = st.columns([1.3, 1.3, 1.3, 2.7])
+    planilha = exportar.planilha(p, sol, enderecos, coords, tabela_comparacao(p, solucoes))
+    a, b, c, d, _ = st.columns([1.3, 1.3, 1.3, 1.2, 1.4])
     a.download_button("⬇️ Baixar plano (Excel)", planilha, "plano_de_rotas.xlsx",
                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                       type="primary", width="stretch")
-    b.button("← Ajustar frota", on_click=ir, args=(2,), width="stretch")
-    c.button("🏠 Novo roteiro", on_click=recomecar, width="stretch", key="fim_inicio")
+    with b.popover("⬇️ Instância e solução (JSON)", width="stretch"):
+        st.markdown("A **instância** (pontos, matriz de distâncias e frota) é a saída do "
+                    "módulo geográfico. Dá para resolvê-la sem o app:  \n"
+                    "`python resolver_instancia.py instancia.json`")
+        st.download_button("Instância (JSON)", exportar.json_bytes(p.para_dict(coords)),
+                           "instancia.json", "application/json", width="stretch")
+        st.download_button("Solução (JSON)", exportar.json_bytes(exportar.solucao_dict(p, sol)),
+                           "solucao.json", "application/json", width="stretch")
+    c.button("← Ajustar frota", on_click=ir, args=(2,), width="stretch")
+    d.button("🏠 Novo roteiro", on_click=recomecar, width="stretch", key="fim_inicio")
 
 
-def tabela_comparacao(solucoes) -> pd.DataFrame:
+def tabela_comparacao(p: Problema, solucoes) -> pd.DataFrame:
+    u = p.unidade
     linhas = []
     for nome, s in solucoes.items():
         linhas.append({
             "Método": s.metodo,
-            "Custo (R$)": round(s.custo, 2) if s.rotas else None,
+            f"Valor ({u})": round(s.custo, 2) if s.rotas else None,
             "Distância (km)": round(s.distancia, 2) if s.rotas else None,
             "Veículos": len(s.rotas),
-            "Limitante inferior (R$)": None if s.limitante_inferior is None else round(s.limitante_inferior, 2),
+            f"Limitante inferior ({u})": None if s.limitante_inferior is None else round(s.limitante_inferior, 2),
             "Gap (%)": None if s.gap is None else round(s.gap, 2),
             "Ótima provada": "sim" if s.otima else "não",
             "Tempo (s)": round(s.tempo_s, 2),

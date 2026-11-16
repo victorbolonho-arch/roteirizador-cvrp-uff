@@ -8,8 +8,8 @@ Aplicativo web que transforma uma lista de **endereços** e uma **frota** num
 
 ```
 Etapa 1  endereços  →  coordenadas  →  distâncias e tempos pelas ruas
-Etapa 2  frota: tipos de veículo, capacidade, quantidade, custos, depósito, jornada
-Etapa 3  GRASP + VRPSolverEasy  →  rotas no mapa, ordem de visita, Excel, Google Maps
+Etapa 2  objetivo (CVRP clássico ou custo) e frota: capacidade, quantidade, depósito, jornada
+Etapa 3  GRASP + VRPSolverEasy  →  rotas no mapa, ordem de visita, Excel, JSON, Google Maps
 ```
 
 ![Etapa 3](docs/etapa3.png)
@@ -23,12 +23,13 @@ Etapa 3  GRASP + VRPSolverEasy  →  rotas no mapa, ordem de visita, Excel, Goog
 | Entrada dos pontos | tabela | tabela **ou** planilha CSV/Excel, com exemplo pronto |
 | Geocodificação | automática | automática **com conferência no mapa e correção manual** das coordenadas; serviço de reserva |
 | Distâncias | — | **pelas ruas** (OSRM), em km e minutos, **assimétricas** (mão única) |
+| Objetivo | distância | **menor distância (CVRP clássico)**, padrão, ou, como extensão, **menor custo em R$** |
 | Frota | um tipo, custo por km | vários tipos, **custo fixo + por km + por hora**, cada um com seu depósito e **jornada** |
 | Restrições | capacidade | capacidade, tempo de parada em cada cliente, **jornada** dos veículos, rota aberta |
 | Algoritmo | VRPSolverEasy | **GRASP (trabalho 4) + VRPSolverEasy**: a heurística dá a solução de partida e o solver melhora ou **prova a otimalidade** |
 | Qualidade da resposta | status | status, **limitante inferior e gap** quando não fecha o ótimo |
 | Resultado | mapa | mapa por ruas com **paradas numeradas** e camadas por veículo; horário de chegada em cada parada; ocupação |
-| Saída | — | **Excel** do plano e **link do Google Maps** de cada rota |
+| Saída | — | **Excel** do plano, **instância e solução em JSON** e **link do Google Maps** de cada rota |
 
 ---
 
@@ -40,12 +41,13 @@ Etapa 3  GRASP + VRPSolverEasy  →  rotas no mapa, ordem de visita, Excel, Goog
    digitar qualquer uma) e clique em **Aplicar**. Clique em
    **Geocodificar**, confira os pontos no mapa e corrija a latitude/longitude
    de algum que tenha caído no lugar errado.
-2. **Frota** — cadastre os tipos de veículo e escolha se eles voltam ao
-   depósito. O botão **ⓘ** explica cada coluna, com um exemplo de como o custo
-   é calculado.
+2. **Frota** — escolha o objetivo (**menor distância**, o CVRP clássico, ou
+   **menor custo em R$**), cadastre os tipos de veículo e escolha se eles
+   voltam ao depósito. Os botões **ⓘ** explicam cada parte.
 3. **Rotas** — o mapa mostra cada veículo numa cor, com as paradas numeradas
    na ordem de visita. Clique numa parada para ver o horário de chegada.
-   Baixe o plano em Excel ou abra a rota direto no Google Maps.
+   Baixe o plano em Excel, a instância e a solução em JSON, ou abra a rota
+   direto no Google Maps.
 
 Os botões no topo de cada tela (e as etapas na barra lateral) voltam às etapas
 anteriores sem perder o que foi preenchido; **🏠 Novo roteiro** apaga tudo e
@@ -65,8 +67,14 @@ streamlit run app.py
 Testes:
 
 ```bash
-python validar.py          # modelo, GRASP e solver (inclui força bruta)
+python validar.py          # modelo, GRASP e solver (força bruta e CVRPLIB)
 python validar.py --app    # e também o fluxo completo da interface
+```
+
+Resolver uma instância baixada do app (etapa 3), sem interface e sem internet:
+
+```bash
+python resolver_instancia.py instancia.json --tempo 60 --saida solucao.json
 ```
 
 ### Publicar no Streamlit Community Cloud
@@ -90,8 +98,25 @@ python validar.py --app    # e também o fluxo completo da interface
 | `solver.py` | Modelagem no VRPSolverEasy, execução isolada num processo, resolução em duas fases |
 | `heuristica.py` | GRASP: inserção mais barata aleatorizada + busca local (2-opt, troca(0,1), troca(1,1), troca de veículo) |
 | `mapa.py` | Mapa Folium: rotas pelas ruas, paradas numeradas, camadas por veículo |
-| `exportar.py` | Planilha Excel e links do Google Maps |
-| `validar.py` | Testes, incluindo comparação do solver com força bruta |
+| `exportar.py` | Planilha Excel, solução em JSON e links do Google Maps |
+| `resolver_instancia.py` | O módulo de otimização sozinho: lê a instância em JSON e grava a solução em JSON |
+| `validar.py` | Testes: solver contra força bruta e contra o ótimo publicado da CVRPLIB, GRASP, JSON, interface |
+| `dados/cvrplib/` | Instâncias P-n16-k8, E-n22-k4 e A-n32-k5 da CVRPLIB |
+
+Os módulos seguem a separação sugerida para o trabalho:
+
+```
+módulo geográfico (geo.py)      endereços → coordenadas → matriz de distâncias
+        │  instância em JSON (Problema.para_dict)
+        ▼
+módulo de otimização            GRASP + VRPSolverEasy → sequências, limitante, gap
+        │  solução em JSON (exportar.solucao_dict)
+        ▼
+módulo de visualização (mapa.py) traçado pelas ruas e mapa interativo
+```
+
+Por isso o solver é testado sem nenhuma API geográfica, com matrizes
+artificiais e instâncias da CVRPLIB.
 
 O solver e a heurística são conferidos pela **mesma** função `avaliar_rota`.
 Se cada um calculasse custo do seu jeito, a comparação entre eles não valeria
@@ -114,8 +139,19 @@ Vanderbeck, 2020) acha o ótimo, mas o tempo cresce rápido. Juntos:
    achou o ótimo. Se não der tempo, o app mostra o **limitante inferior** e o
    **gap** — quanto, no máximo, a solução pode estar acima do ótimo.
 
-No exemplo de Niterói, o GRASP chega a R$ 364,74 e o VRPSolverEasy prova em
-cerca de 1 s que esse é o ótimo.
+No exemplo de Niterói, o GRASP chega ao ótimo e o VRPSolverEasy prova isso em
+cerca de 1 s: 63,7 km no CVRP clássico e cerca de R$ 364 no objetivo de custo
+(os números exatos mudam um pouco quando o mapa do OpenStreetMap é
+atualizado, porque a matriz é calculada na hora).
+
+### Objetivo: CVRP clássico ou custo
+
+O padrão é o **CVRP clássico**: minimizar a distância total respeitando a
+capacidade. Como extensão, o app também minimiza o **custo em R$** (custo fixo
+por veículo + por km + por hora dirigindo), que aproxima a operação real: pode
+valer rodar alguns km a mais para sair com um veículo a menos. A escolha muda
+só a regra de valor em `avaliar_rota` e os custos passados ao VRPSolverEasy;
+o resto do app é o mesmo.
 
 ### Distâncias pelas ruas
 
@@ -206,13 +242,19 @@ dependências do sistema), o app também continua funcionando com o GRASP.
 5. **Frota insuficiente**: o GRASP aponta os clientes sem veículo e mantém
    viável o que atendeu.
 6. **Interface**: o exemplo de Niterói percorre as três etapas sem erro e
-   termina com solução ótima provada.
+   termina com solução ótima provada, nos dois objetivos.
+7. **CVRPLIB**: em P-n16-k8, E-n22-k4 e A-n32-k5 (distâncias com o
+   arredondamento `nint` da CVRPLIB), o VRPSolverEasy prova o **ótimo
+   publicado** — 450, 375 e 784 — em cerca de 1 s cada.
+8. **Objetivo distância e JSON**: no CVRP clássico o custo fixo é ignorado e o
+   solver bate com a força bruta; a instância sai e volta do JSON sem perder
+   nada, e resolvê-la pelo `resolver_instancia.py` dá o mesmo ótimo.
 
 ---
 
 ## Limitações conhecidas
 
-- **Frota heterogênea com custos fixos diferentes.** Com o solver livre CLP,
+- **Frota heterogênea com custos fixos diferentes** (só no objetivo de custo). Com o solver livre CLP,
   o VRPSolverEasy prova o ótimo de uma frota de um tipo em cerca de 1 s, mas
   com dois tipos de custo fixo diferente o limitante inferior fecha devagar
   (no exemplo, gap de ~9% após 30 s). O app mostra esse gap e usa a melhor
