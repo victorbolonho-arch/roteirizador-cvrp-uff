@@ -133,9 +133,34 @@ def testar_conferencia_de_rua():
            "com número, um parque de mesmo nome não serve")
     checar(geo._rua_confere("R. Prof. Plínio Leite 10", lugar("Rua Professor Plínio Leite")),
            "aceita abreviações (Prof. = Professor)")
+    checar(geo._rua_confere("Rua Garcia d'Ávila, 100", lugar("Rua Garcia d'Ávila")),
+           "aceita nome com apóstrofo (Garcia d'Ávila)")
+    checar(geo._rua_confere("Avenida Brás de Pina, 300", lugar("Avenida do Braz de Pina"))
+           and geo._rua_confere("Rua Mattos, 10", lugar("Rua Matos")),
+           "aceita grafias equivalentes (Brás = Braz, Mattos = Matos)")
+    checar(not geo._rua_confere("Rua Brás de Pina, 300", lugar("Rua Brás Cubas")),
+           "e continua rejeitando rua diferente com uma palavra igual")
     checar(geo._menciona_cidade("Centro, Rio de Janeiro", "Rio de Janeiro")
            and not geo._menciona_cidade("Centro, Niterói", "Rio de Janeiro"),
            "reconhece a cidade escrita no endereço")
+
+    # Homônimo em outra cidade vindo em 1º lugar (caso real: Rua São Clemente,
+    # bairro Botafogo, existe no Rio e em Nova Iguaçu). Sem internet: o serviço
+    # é substituído por uma resposta fixa.
+    def candidato(cidade, lat):
+        return {"lat": lat, "lon": -43.2, "texto": f"Rua São Clemente, Botafogo, {cidade}",
+                "nome": "", "rua": "Rua São Clemente", "cidade": cidade, "uf": "RJ"}
+    originais = (geo._consultar_nominatim, geo._consultar_photon, geo._ler_cache, geo._gravar_cache)
+    geo._consultar_nominatim = lambda q: [candidato("Nova Iguaçu", -22.70), candidato("Rio de Janeiro", -22.95)]
+    geo._consultar_photon = lambda q: []
+    geo._ler_cache, geo._gravar_cache = (lambda: {}), (lambda c: None)
+    try:
+        l1 = geo.geocodificar("Rua São Clemente, 244, Botafogo, Rio de Janeiro", "Niterói, RJ")
+        l2 = geo.geocodificar("Rua São Clemente, 244, Botafogo", "Rio de Janeiro, RJ")
+    finally:
+        geo._consultar_nominatim, geo._consultar_photon, geo._ler_cache, geo._gravar_cache = originais
+    checar(l1.lat == -22.95 and l2.lat == -22.95,
+           "homônimo de outra cidade em 1º lugar não passa à frente da cidade pedida")
 
 
 def testar_forca_bruta():

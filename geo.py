@@ -121,9 +121,21 @@ def _palavras(texto: str) -> list[str]:
 
 
 def _palavras_da_rua(endereco: str) -> list[str]:
-    """Palavras que identificam a rua: o 1º trecho do endereço, sem tipo nem número."""
+    """Palavras que identificam a rua: o 1º trecho do endereço, sem tipo nem número.
+
+    Letras soltas ficam de fora: o "d" de "Garcia d'Ávila" não identifica nada.
+    """
     rua = endereco.split(",")[0]
-    return [_ABREVIACOES.get(p, p) for p in _palavras(rua) if p not in _GENERICAS]
+    return [_ABREVIACOES.get(p, p) for p in _palavras(rua)
+            if p not in _GENERICAS and len(p) > 1]
+
+
+def _grafia(palavra: str) -> str:
+    """Iguala grafias antigas e variantes de nomes: Braz/Brás, Mattos/Matos, Phelippe/Felipe."""
+    import re
+    p = palavra.replace("ph", "f").replace("th", "t").replace("y", "i")
+    p = re.sub(r"(.)\1", r"\1", p)               # letras dobradas
+    return p[:-1] + "s" if p.endswith("z") else p
 
 
 def _rua_confere(endereco: str, candidato: dict) -> bool:
@@ -141,9 +153,9 @@ def _rua_confere(endereco: str, candidato: dict) -> bool:
     # Com número, é uma rua: confere-se o nome da rua. Sem número pode ser um
     # lugar ("Shopping Plaza"), e vale também o nome do lugar.
     alvo = candidato["rua"] if tem_numero else f"{candidato['rua']} {candidato['nome']}"
-    achadas = set(_palavras(alvo))
-    bate = sum(any(a.startswith(p) or p.startswith(a) for a in achadas if len(a) > 1)
-               for p in procuradas)
+    achadas = {_grafia(a) for a in _palavras(alvo) if len(a) > 1}
+    procuradas = [_grafia(p) for p in procuradas]
+    bate = sum(any(a.startswith(p) or p.startswith(a) for a in achadas) for p in procuradas)
     return bate >= max(1, math.ceil(0.75 * len(procuradas)))
 
 
@@ -264,10 +276,12 @@ def geocodificar(endereco: str, cidade_padrao: str = "") -> Local:
         variantes.append(f"Rua {endereco}")
 
     for base in variantes:
-        achado = None
-        if cidade_padrao and not _menciona_cidade(base, cidade_padrao):
-            achado = (procurar(base, base, cidade_escrita_ou_padrao(base))
-                      or procurar(base, f"{base}, {cidade_padrao}", lambda c: True))
+        # Mesmo quando o endereço já diz a cidade, o serviço pode pôr em 1º lugar
+        # um homônimo de outra cidade (Rua São Clemente existe no bairro Botafogo
+        # do Rio e no de Nova Iguaçu): a cidade escrita ou a padrão vem primeiro.
+        achado = procurar(base, base, cidade_escrita_ou_padrao(base))
+        if not achado and cidade_padrao and not _menciona_cidade(base, cidade_padrao):
+            achado = procurar(base, f"{base}, {cidade_padrao}", lambda c: True)
         achado = achado or procurar(base, base, lambda c: True)
         if achado:
             return achado
